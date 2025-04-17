@@ -40,16 +40,16 @@ pip install playwright beautifulsoup4 requests img2pdf pillow PyPDF2
 
 3. Install Playwright browsers:
 ```bash
-python -m playwright install chromi![Workflow Diagram](https://via.placeholder.com/800x400.png?text=Comic+Downloader+Workflow)um
+python -m playwright install
 ```
 
 ## Usage
-Basic Command
+### Basic Command
 ```bash
 python comic_downloader.py --book-id [COMIC_ID]
 ```
 
-## Full Options
+### Full Options
 ```bash
 python comic_downloader.py \
   --book-id 12345 \          # Comic ID from 8comic URL
@@ -86,37 +86,45 @@ Comic_Name_ID/
 ```
 
 ## Troubleshooting
-Common Issues
-Timeout Errors
+### Common Issues
+#### Timeout Errors
 
 Increase wait times in code (default: 15s)
 Check network connectivity to 8comic.com
-Login Failures
+#### Login Failures
 
 Verify account credentials
 Update CSS selectors if website changes
-Image Conversion Failures
+#### Image Conversion Failures
 
 Check temporary internet restrictions
 Verify image URLs in .txt files
-Debugging Mode
+## Debugging Mode
 
 Run with logging:
+```bash
 python comic_downloader.py --book-id 88434 2>&1 | tee output.log
+```
 
-Compliance Notice
+# Compliance Notice
 ⚠️ Important Legal Considerations
 
+```text
 Check website terms of service before use
 Only download content you have rights to access
 Respect copyright laws in your jurisdiction
 This is a proof-of-concept - use responsibly
-Contributing
+```
+
+## Contributing
+
 Fork repository
+```text
 Create feature branch (git checkout -b feature/improvement)
 Commit changes (git commit -am 'Add new feature')
 Push to branch (git push origin feature/improvement)
 Create Merge Request
+```
 
 ## License
 MIT License - See LICENSE file for details
