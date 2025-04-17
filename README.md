@@ -86,20 +86,18 @@ Comic_Name_ID/
 ```
 
 ## Troubleshooting
-### Common Issues
-#### Timeout Errors
+Common Issues
+1. Timeout Errors
+* Increase wait times in code (default: 15s)
+* Check network connectivity to 8comic.com
+2. Login Failures
+* Verify account credentials
+* Update CSS selectors if website changes
+3. Image Conversion Failures
+* Check temporary internet restrictions
+* Verify image URLs in .txt files
 
-Increase wait times in code (default: 15s)
-Check network connectivity to 8comic.com
-#### Login Failures
-
-Verify account credentials
-Update CSS selectors if website changes
-#### Image Conversion Failures
-
-Check temporary internet restrictions
-Verify image URLs in .txt files
-## Debugging Mode
+Debugging Mode
 
 Run with logging:
 ```bash
@@ -108,23 +106,17 @@ python comic_downloader.py --book-id 88434 2>&1 | tee output.log
 
 # Compliance Notice
 ⚠️ Important Legal Considerations
-
-```text
-Check website terms of service before use
-Only download content you have rights to access
-Respect copyright laws in your jurisdiction
-This is a proof-of-concept - use responsibly
-```
+* Check website terms of service before use
+* Only download content you have rights to access
+* Respect copyright laws in your jurisdiction
+*This is a proof-of-concept - use responsibly
 
 ## Contributing
-
-Fork repository
-```text
-Create feature branch (git checkout -b feature/improvement)
-Commit changes (git commit -am 'Add new feature')
-Push to branch (git push origin feature/improvement)
-Create Merge Request
-```
+1. Fork repository
+2. Create feature branch (git checkout -b feature/improvement)
+3. Commit changes (git commit -am 'Add new feature')
+4. Push to branch (git push origin feature/improvement)
+5. Create Merge Request
 
 ## License
 MIT License - See LICENSE file for details
