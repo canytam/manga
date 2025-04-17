@@ -1,3 +1,29 @@
+"""
+Comic Download and PDF Conversion Tool
+
+This script automates the process of downloading comic chapters from 8comic.com,
+converting the images to PDF format, and generating a web-based content index.
+
+Key Features:
+- Automated browser navigation using Playwright
+- Image URL extraction and validation
+- Parallel image downloading with retry mechanisms
+- Image processing and PDF conversion with size optimization
+- Web content page generation with metadata
+- Existing file handling and overwrite protection
+
+Modules:
+- async_playwright: For browser automation and web scraping
+- BeautifulSoup: HTML parsing
+- img2pdf: PDF generation from images
+- requests: Image downloading with session management
+- ThreadPoolExecutor: Parallel image processing
+- PyPDF2: PDF metadata extraction
+
+Usage:
+python script.py --book-id <comic_id> [--overwrite] [--show-content]
+"""
+
 from playwright.async_api import async_playwright, Playwright, TimeoutError as PlaywrightTimeoutError
 import asyncio
 from bs4 import BeautifulSoup
@@ -18,18 +44,34 @@ import webbrowser
 
 
 def get_image_path(index, chapter_name, chapter_dir):
+    """Generate standardized path for storing image URL lists
+    Args:
+        index: Chapter number
+        chapter_name: Sanitized chapter name
+        chapter_dir: Base directory for comic storage
+    Returns:
+        Path to chapter's image list file
+    """
     return os.path.join(chapter_dir, f'{chapter_dir}-images', f'ch{index:04d} - {chapter_name}.txt')
 
 def get_pdf_path(index, chapter_name, chapter_dir):
+    """Generate standardized path for PDF files
+    Args:
+        index: Chapter number
+        chapter_name: Sanitized chapter name
+        chapter_dir: Base directory for comic storage
+    Returns:
+        Path to chapter's PDF file
+    """
     return os.path.join(chapter_dir, f'{chapter_dir}-pdf', f'ch{index:04d} - {chapter_name}.pdf')
 
 def create_web_content_page(pdf_folder: str, show_content: bool = False) -> None:
-    """
-    Creates a web-based content page listing all PDF files in a folder.
-    
+    """Generate HTML index page for downloaded PDFs
     Args:
-        pdf_folder (str): Path to the folder containing PDF files
-        output_file (str): Name of the output HTML file (default: index.html)
+        pdf_folder: Path containing PDF files
+        show_content: Automatically open in browser when True
+    Generates:
+        index.html with responsive design and file metadata
     """
     # Create list to store PDF information
     pdf_files = []
@@ -138,6 +180,16 @@ def create_web_content_page(pdf_folder: str, show_content: bool = False) -> None
         webbrowser.open(f'file://{os.path.abspath(output_path)}')
 
 def generate_pdf_from_images(image_list_path: str, output_pdf_path: str) -> None:
+    """Convert image URLs to optimized PDF
+    Args:
+        image_list_path: Text file containing image URLs
+        output_pdf_path: Target PDF file path
+    Process:
+        1. Parallel image downloading with retries
+        2. Image validation and format conversion
+        3. Smart resizing with aspect ratio preservation
+        4. PDF assembly with proper DPI settings
+    """
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
@@ -284,6 +336,19 @@ def generate_pdf_from_images(image_list_path: str, output_pdf_path: str) -> None
         raise RuntimeError(f"PDF Generation Failed: {str(e)}") from e
 
 async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> str:
+    """Main scraping workflow for 8comic.com
+    Args:
+        p: Playwright instance
+        book_id: Comic identifier from URL
+        overwrite: Force re-download existing content
+    Returns:
+        Path to downloaded content directory
+    Process:
+        1. Browser initialization
+        2. Chapter list extraction
+        3. Image URL collection with multiple fallback strategies
+        4. Chapter navigation with error recovery
+    """
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
@@ -405,6 +470,13 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
         await browser.close()
    
 async def main() -> None:
+    """Entry point for command-line execution
+    Handles:
+        - Argument parsing
+        - Logging configuration
+        - Workflow coordination
+        - Error handling
+    """
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
 
