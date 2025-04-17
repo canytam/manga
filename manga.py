@@ -41,6 +41,7 @@ import sys
 import time
 from PyPDF2 import PdfReader, PdfWriter
 import webbrowser
+import aiohttp
 
 
 def get_image_path(index, chapter_name, chapter_dir):
@@ -335,6 +336,119 @@ def generate_pdf_from_images(image_list_path: str, output_pdf_path: str) -> None
         logger.error(f"PDF Generation Failed: {str(e)}")
         raise RuntimeError(f"PDF Generation Failed: {str(e)}") from e
 
+async def run_xmanhua(p: Playwright, book_id: str, overwrite: bool=False) -> str:
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+
+    browser = await p.chromium.launch(headless=True, slow_mo=500)
+    page = await browser.new_page()
+
+    try:
+        await page.goto(f"https://www.xmanhua.com/{book_id}/")
+        body = await page.inner_html('body')
+        soup = BeautifulSoup(body, 'html.parser')
+        book_name = soup.find('p', class_="detail-info-title").get_text(strip=True)
+        book_dir = f"{book_name}_{book_id}"
+        print("Book Name: ", book_name)
+        print("Book directory: ", book_dir)
+        os.makedirs(book_dir, exist_ok=True)
+        os.makedirs(f'{book_dir}/{book_dir}-images', exist_ok=True)
+
+        chapters = []
+        for index, a_tag in enumerate(reversed(soup.find_all('a', class_="detail-list-form-item")), start=1):
+            a_tag.span.decompose()
+            desired_text = a_tag.get_text(strip=True)
+            #logger.info('Image Path: ' + get_image_path(index, desired_text, book_dir))
+            #logger.info('PDF Path: ' + get_pdf_path(index, desired_text, book_dir))
+            #logger.info('overwrite: ' + str(overwrite))
+            #logger.info('exists: ' + str(os.path.exists(get_image_path(index, a_tag.get_text(strip=True), book_dir))))
+            if overwrite or not os.path.exists(get_image_path(index, desired_text, book_dir)):
+                chapters.append({'index': index, 'href': a_tag['href'], 'name': desired_text})
+                logger.info(f"Found chapter {index}: {desired_text}")
+            
+        if not chapters:
+            await browser.close()
+            return book_dir
+        
+        #await page.locator(f"a href='{chapters[0]['href']}'").click()
+        #await page.is_visible('div.comics-end')
+        #await page.click('a.view-back')
+
+        for chapter in chapters:
+            logger.info(f"Processing chapter {chapter['index']}")
+            try:
+                # Retry mechanism for chapter navigation
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        await page.locator(f'a href=\"{chapter["href"]}\"').click()
+                        # Wait for both container AND at least one image#{chapter["id"]
+                        #await asyncio.gather(
+                        #    page.wait_for_selector('div.comics-end', timeout=15000),
+                        #    page.wait_for_selector('div#comics-pics img', timeout=15000)
+                        #)
+                        break
+                    except PlaywrightTimeoutError:
+                        if attempt == max_retries - 1:
+                            raise
+                        await page.reload()
+                        logger.warning(f"Retrying chapter {chapter['index']} ({attempt+1}/{max_retries})")
+                
+                # Multiple fallback strategies for image extraction
+                images = []
+                extraction_attempts = [
+                    {'selector': 'div#comics-pics img[src]', 'attr': 'src'},
+                    {'selector': 'img[data-src]', 'attr': 'data-src'},
+                    {'selector': 'source[srcset]', 'attr': 'srcset'}
+                ]
+
+                for strategy in extraction_attempts:
+                    if not images:
+                        try:
+                            elements = await page.query_selector_all(strategy['selector'])
+                            for element in elements:
+                                src = await element.get_attribute(strategy['attr'])
+                                if src:
+                                    # Clean and normalize URL
+                                    src = unquote(src.split('?')[0])  # Remove URL parameters
+                                    if src.startswith('//'):
+                                        src = f'https:{src}'
+                                    elif not src.startswith('http'):
+                                        src = urljoin(page.url, src)
+                                    images.append(src)
+                        except Exception as e:
+                            logger.warning(f"Image extraction failed with {strategy}: {str(e)}")
+
+                # Final validation before saving
+                if not images:
+                    logger.error(f"No images found for chapter {chapter['index']} after multiple attempts")
+                    continue
+
+                # Deduplicate while preserving order
+                seen = set()
+                unique_images = [x for x in images if not (x in seen or seen.add(x))]
+
+                # Save only if we have valid URLs
+                output_path = get_image_path(chapter['index'], chapter['name'], book_dir)
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    for url in unique_images:
+                        f.write(f"{url}\n")
+                    logger.info(f"Saved {len(unique_images)} images to {output_path}")
+
+                await page.click('a.view-back')
+
+            except Exception as e:
+                logger.error(f"Failed chapter {chapter['index']}: {str(e)}")
+                continue
+
+        return book_dir
+
+    except Exception as e:
+        logging.error(f"Error occurred: {str(e)}")
+        return None
+    finally:
+        await browser.close()
+   
 async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> str:
     """Main scraping workflow for 8comic.com
     Args:
@@ -484,21 +598,39 @@ async def main() -> None:
     parser.add_argument('--book-id', required=True, help='Comic book ID to download')
     parser.add_argument('--overwrite', action='store_true', help='Force re-download of existing chapters')
     parser.add_argument('--show-content', action='store_true', help='Show content page')
+    parser.add_argument('--from_8comic', action='store_true', help='https://www.8comic.com')
+    parser.add_argument('--from_xmanhua', action='store_true', help='https://www.xmanhua.com/')
     args = parser.parse_args()
     
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    )                
     
+    count = (1 if args.from_8comic else 0) + (1 if args.from_xmanhua else 0)
+    if (count > 1):
+        print("You must select only one source from 8comic and xmanhua.", flush=True)
+        exit(1)
+    
+    if (count < 1):
+        print("You must select one source from 8comic and xmanhua.", flush=True)
+        exit(1)
+
     try:
-        async with async_playwright() as playwright:
-            result = None
-            while not result:
-                result = await run_8comic(playwright, args.book_id, args.overwrite)
-            logging.info(f"Successfully downloaded to directory: {result}")
-        
+        if args.from_8comic:
+            async with async_playwright() as playwright:
+                result = None
+                while not result:
+                    result = await run_8comic(playwright, args.book_id, args.overwrite)
+                logging.info(f"Successfully downloaded to directory: {result}")
+        elif args.from_xmanhua:
+            async with async_playwright() as playwright:
+                result = None
+                while not result:
+                    result = await run_xmanhua(playwright, args.book_id, args.overwrite)
+                logging.info(f"Successfully downloaded to directory: {result}")
+
         for filename in os.listdir(f"{result}/{result}-images"):
             if filename.endswith(".txt"):
                 #logging.info("Overwrite: " + str(args.overwrite))

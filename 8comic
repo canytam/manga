@@ -14,3 +14,7 @@ The following are details of the function :
 4) Inside the <div id="chapters"> section, you can find the details of the chapters in the <a href> tag.
 5) The function should return the name of the book and an array of the chapters name and url.
 6) The following is a sample of the content page.
+
+
+xmanhua.com
+<p class="detail-info-title">   海賊王</p>
