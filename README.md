@@ -2,7 +2,7 @@
 
 A Python tool for downloading comic chapters from 8comic.com and converting them to optimized PDF files with automatic web index generation.
 
-![Workflow Diagram](https://via.placeholder.com/800x400.png?text=Comic+Downloader+Workflow) <!-- Replace with actual diagram if available -->
+<!--![Workflow Diagram](https://via.placeholder.com/800x400.png?text=Comic+Downloader+Workflow) <!-- Replace with actual diagram if available -->
 
 ## Features
 
@@ -31,37 +31,50 @@ A Python tool for downloading comic chapters from 8comic.com and converting them
 ```bash
 git clone https://gitlab.com/your-username/comic-downloader.git
 cd comic-downloader
+```
 
 2. Install dependencies:
+```bash
 pip install playwright beautifulsoup4 requests img2pdf pillow PyPDF2
+```
 
 3. Install Playwright browsers:
-python -m playwright install chromium
+```bash
+python -m playwright install chromi![Workflow Diagram](https://via.placeholder.com/800x400.png?text=Comic+Downloader+Workflow)um
+```
 
-Usage
+## Usage
 Basic Command
+```bash
 python comic_downloader.py --book-id [COMIC_ID]
+```
 
-Full Options
+## Full Options
+```bash
 python comic_downloader.py \
   --book-id 12345 \          # Comic ID from 8comic URL
   --overwrite \              # Force re-download existing content
   --show-content             # Auto-open index page when complete
+```
 
-Example Workflow
+## Example Workflow
+```bash
 # Download comic #88434 (will create "Comic_Name_88434" folder)
 python comic_downloader.py --book-id 88434
 
 # Generate PDFs and open index page when done
 python comic_downloader.py --book-id 88434 --show-content
+```
 
-Configuration
+## Configuration
 Environment Variables
 Create .env file for authentication:
+```text
 COMIC_USERNAME=your_username
 COMIC_PASSWORD=your_password
+```
 
-Directory Structure
+## Directory Structure
 Comic_Name_ID/
 ├── Comic_Name_ID-images/    # Raw image URL lists
 │   └── ch0001 - Chapter 1.txt
@@ -70,7 +83,7 @@ Comic_Name_ID/
 │   └── index.html           # Web content index
 └── metadata.json            # Future metadata storage
 
-Troubleshooting
+## Troubleshooting
 Common Issues
 Timeout Errors
 
@@ -102,10 +115,11 @@ Create feature branch (git checkout -b feature/improvement)
 Commit changes (git commit -am 'Add new feature')
 Push to branch (git push origin feature/improvement)
 Create Merge Request
-License
+
+## License
 MIT License - See LICENSE file for details
 
-Key elements included:
+## Key elements included:
 1. Clear visual hierarchy with feature highlights
 2. Step-by-step installation instructions
 3. Usage examples with common scenarios
