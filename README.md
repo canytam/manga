@@ -67,14 +67,15 @@ python comic_downloader.py --book-id 88434 --show-content
 ```
 
 ## Configuration
-Environment Variables
+### Environment Variables
 Create .env file for authentication:
 ```text
 COMIC_USERNAME=your_username
 COMIC_PASSWORD=your_password
 ```
 
-## Directory Structure
+### Directory Structure
+```text
 Comic_Name_ID/
 ├── Comic_Name_ID-images/    # Raw image URL lists
 │   └── ch0001 - Chapter 1.txt
@@ -82,6 +83,7 @@ Comic_Name_ID/
 │   ├── ch0001 - Chapter 1.pdf
 │   └── index.html           # Web content index
 └── metadata.json            # Future metadata storage
+```
 
 ## Troubleshooting
 Common Issues
