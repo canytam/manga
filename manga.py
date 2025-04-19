@@ -42,9 +42,25 @@ import time
 from PyPDF2 import PdfReader, PdfWriter
 import webbrowser
 import aiohttp
+import shutil
+from dotenv import load_dotenv
 
+_8COMIC = "_8comic"
+_XMANHUA = "xmanhua"
+_COMPLETED = "completed"
 
-def get_image_path(index, chapter_name, chapter_dir):
+load_dotenv()
+
+def get_root_path(chapter_dir, website):
+    return os.path.join(website, chapter_dir)
+
+def get_image_root(chapter_dir, website):
+    return os.path.join(get_root_path(chapter_dir, website), f'{chapter_dir}-images')
+
+def get_pdf_root(chapter_dir, website):
+    return os.path.join(get_root_path(chapter_dir, website), f'{chapter_dir}-pdf')
+
+def get_image_path(index, chapter_name, chapter_dir, website):
     """Generate standardized path for storing image URL lists
     Args:
         index: Chapter number
@@ -53,9 +69,9 @@ def get_image_path(index, chapter_name, chapter_dir):
     Returns:
         Path to chapter's image list file
     """
-    return os.path.join(chapter_dir, f'{chapter_dir}-images', f'ch{index:04d} - {chapter_name}.txt')
+    return os.path.join(get_image_root(chapter_dir, website), f'ch{index:04d} - {chapter_name}.txt')
 
-def get_pdf_path(index, chapter_name, chapter_dir):
+def get_pdf_path(index, chapter_name, chapter_dir, website):
     """Generate standardized path for PDF files
     Args:
         index: Chapter number
@@ -64,9 +80,9 @@ def get_pdf_path(index, chapter_name, chapter_dir):
     Returns:
         Path to chapter's PDF file
     """
-    return os.path.join(chapter_dir, f'{chapter_dir}-pdf', f'ch{index:04d} - {chapter_name}.pdf')
+    return os.path.join(get_pdf_root(chapter_dir, website), f'ch{index:04d} - {chapter_name}.pdf')
 
-def create_web_content_page(pdf_folder: str, show_content: bool = False) -> None:
+def create_web_content_page(pdf_folder: str) -> str:
     """Generate HTML index page for downloaded PDFs
     Args:
         pdf_folder: Path containing PDF files
@@ -175,10 +191,8 @@ def create_web_content_page(pdf_folder: str, show_content: bool = False) -> None
     output_path = os.path.join(pdf_folder, 'index.html')
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
-    
-    # Open in default browser
-    if show_content:
-        webbrowser.open(f'file://{os.path.abspath(output_path)}')
+        
+    return output_path
 
 def generate_pdf_from_images(image_list_path: str, output_pdf_path: str) -> None:
     """Convert image URLs to optimized PDF
@@ -193,7 +207,6 @@ def generate_pdf_from_images(image_list_path: str, output_pdf_path: str) -> None
     """
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
-
     os.makedirs(os.path.dirname(output_pdf_path), exist_ok=True)
 
     try:
@@ -351,6 +364,7 @@ async def run_xmanhua(p: Playwright, book_id: str, overwrite: bool=False) -> str
         book_dir = f"{book_name}_{book_id}"
         print("Book Name: ", book_name)
         print("Book directory: ", book_dir)
+        is_complted = False
         os.makedirs(book_dir, exist_ok=True)
         os.makedirs(f'{book_dir}/{book_dir}-images', exist_ok=True)
 
@@ -358,11 +372,11 @@ async def run_xmanhua(p: Playwright, book_id: str, overwrite: bool=False) -> str
         for index, a_tag in enumerate(reversed(soup.find_all('a', class_="detail-list-form-item")), start=1):
             a_tag.span.decompose()
             desired_text = a_tag.get_text(strip=True)
-            #logger.info('Image Path: ' + get_image_path(index, desired_text, book_dir))
-            #logger.info('PDF Path: ' + get_pdf_path(index, desired_text, book_dir))
+            #logger.info('Image Path: ' + get_image_path(index, desired_text, book_dir, is_complete))
+            #logger.info('PDF Path: ' + get_pdf_path(index, desired_text, book_dir, is_completed))
             #logger.info('overwrite: ' + str(overwrite))
-            #logger.info('exists: ' + str(os.path.exists(get_image_path(index, a_tag.get_text(strip=True), book_dir))))
-            if overwrite or not os.path.exists(get_image_path(index, desired_text, book_dir)):
+            #logger.info('exists: ' + str(os.path.exists(get_image_path(index, a_tag.get_text(strip=True, is_completed), book_dir))))
+            if overwrite or not os.path.exists(get_image_path(index, desired_text, book_dir, is_completed)):
                 chapters.append({'index': index, 'href': a_tag['href'], 'name': desired_text})
                 logger.info(f"Found chapter {index}: {desired_text}")
             
@@ -429,7 +443,7 @@ async def run_xmanhua(p: Playwright, book_id: str, overwrite: bool=False) -> str
                 unique_images = [x for x in images if not (x in seen or seen.add(x))]
 
                 # Save only if we have valid URLs
-                output_path = get_image_path(chapter['index'], chapter['name'], book_dir)
+                output_path = get_image_path(chapter['index'], chapter['name'], book_dir, is_completed)
                 with open(output_path, 'w', encoding='utf-8') as f:
                     for url in unique_images:
                         f.write(f"{url}\n")
@@ -468,12 +482,13 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
 
     browser = await p.chromium.launch(headless=True, slow_mo=500)
     page = await browser.new_page()
-    # await page.goto(f"https://www.8comic.com/member/login")
-    # await page.fill('input[name="username"]', 'canytam46')
-    # await page.fill('input[name="password"]', '')
-    # await page.get_by_role('button', name='登入').click()
-    # await page.wait_for_selector('div.member_left_menu', timeout=60000)
-    #time.sleep(1)
+    password = os.getenv('KEY_8COMIC')
+    if password:
+        await page.goto(f"https://www.8comic.com/member/login")
+        await page.fill('input[name="username"]', 'canytam46')
+        await page.fill('input[name="password"]', password)
+        await page.get_by_role('button', name='登入').click()
+        await page.wait_for_selector('div.member_left_menu', timeout=60000)
 
     try:
         await page.goto(f"https://www.8comic.com/html/{book_id}.html")
@@ -482,27 +497,27 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
         meta_name = soup.find('meta', {'name': 'name'})
         book_name = meta_name['content'].strip() if meta_name else "Unknown Comic"
         book_dir = f"{book_name}_{book_id}"
- #await page.locator('[type="submit"]').get_by_text('登入').click()
+        body = await page.inner_html('body')
+        soup = BeautifulSoup(body, 'html.parser')
+        is_completed = soup.find('span', {'class': "item-info-status"}).get_text(strip=True) == '已完結'
         content_page = await page.inner_html('div#chapters')
         soup = BeautifulSoup(content_page, 'html.parser')
 
-        os.makedirs(book_dir, exist_ok=True)
-        os.makedirs(f'{book_dir}/{book_dir}-images', exist_ok=True)
+        if is_completed and os.path.exists(get_root_path(book_dir, _COMPLETED)):
+            return book_dir, is_completed
+        os.makedirs(get_root_path(book_dir, _8COMIC), exist_ok=True)
+        os.makedirs(get_image_root(book_dir, _8COMIC), exist_ok=True)
 
         chapters = []
         for index, a_tag in enumerate(soup.find_all('a'), start=1):
             if a_tag.has_attr('id'):
-                #logger.info('Image Path: ' + get_image_path(index, a_tag.get_text(strip=True), book_dir))
-                #logger.info('PDF Path: ' + get_pdf_path(index, a_tag.get_text(strip=True), book_dir))
-                #logger.info('overwrite: ' + str(overwrite))
-                #logger.info('exists: ' + str(os.path.exists(get_image_path(index, a_tag.get_text(strip=True), book_dir))))
-                if overwrite or not os.path.exists(get_image_path(index, a_tag.get_text(strip=True), book_dir)):
+                if overwrite or not os.path.exists(get_image_path(index, a_tag.get_text(strip=True), book_dir, _8COMIC)):
                     chapters.append({'index': index, 'id': a_tag['id'], 'name': a_tag.get_text(strip=True)})
                     logger.info(f"Found chapter {index}: {a_tag.get_text(strip=True)}")
 
         if not chapters:
             await browser.close()
-            return book_dir
+            return book_dir, is_completed
         
         await page.click(f"a#{chapters[0]['id']}")
         await page.is_visible('div.comics-end')
@@ -519,7 +534,7 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
                         # Wait for both container AND at least one image
                         await asyncio.gather(
                             page.wait_for_selector('div.comics-end', timeout=15000),
-                            page.wait_for_selector('div#comics-pics img', timeout=15000)
+                            page.wait_for_selector('div.comics-pic img', timeout=15000)
                         )
                         break
                     except PlaywrightTimeoutError:
@@ -530,28 +545,30 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
 
                 # Multiple fallback strategies for image extraction
                 images = []
-                extraction_attempts = [
-                    {'selector': 'div#comics-pics img[src]', 'attr': 'src'},
-                    {'selector': 'img[data-src]', 'attr': 'data-src'},
-                    {'selector': 'source[srcset]', 'attr': 'srcset'}
-                ]
 
-                for strategy in extraction_attempts:
-                    if not images:
-                        try:
-                            elements = await page.query_selector_all(strategy['selector'])
-                            for element in elements:
-                                src = await element.get_attribute(strategy['attr'])
-                                if src:
-                                    # Clean and normalize URL
-                                    src = unquote(src.split('?')[0])  # Remove URL parameters
-                                    if src.startswith('//'):
-                                        src = f'https:{src}'
-                                    elif not src.startswith('http'):
-                                        src = urljoin(page.url, src)
-                                    images.append(src)
-                        except Exception as e:
-                            logger.warning(f"Image extraction failed with {strategy}: {str(e)}")
+                try:               
+                    html = await page.inner_html('div#comics-pics') 
+                    soup = BeautifulSoup(html, 'html.parser')
+                    for div in soup.select('div.comics-pic'):
+                        img = div.find('img')
+                        if img:
+                            if img.has_attr('src'):
+                                src = img['src']
+                            elif img.has_attr('s'):
+                                encoded_url = img['s']
+                                src = unquote(encoded_url)
+                            else:
+                                continue
+                            
+                            # Clean and normalize URL
+                            src = unquote(src.split('?')[0])  # Remove URL parameters
+                            if src.startswith('//'):
+                                src = f'https:{src}'
+                            elif not src.startswith('http'):
+                                src = urljoin(page.url, src)
+                            images.append(src)
+                except Exception as e:
+                    logger.warning(f"Image extraction failed.: {str(e)}")
 
                 # Final validation before saving
                 if not images:
@@ -563,7 +580,7 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
                 unique_images = [x for x in images if not (x in seen or seen.add(x))]
 
                 # Save only if we have valid URLs
-                output_path = get_image_path(chapter['index'], chapter['name'], book_dir)
+                output_path = get_image_path(chapter['index'], chapter['name'], book_dir, _8COMIC)
                 with open(output_path, 'w', encoding='utf-8') as f:
                     for url in unique_images:
                         f.write(f"{url}\n")
@@ -575,14 +592,36 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
                 logger.error(f"Failed chapter {chapter['index']}: {str(e)}")
                 continue
 
-        return book_dir
+        return book_dir, is_completed
 
     except Exception as e:
         logging.error(f"Error occurred: {str(e)}")
-        return None
+        return None, False
     finally:
         await browser.close()
    
+def generate_pdf(result, website, overwrite, is_completed) -> str:
+    if os.path.exists(get_image_root(result, website)):
+        for filename in os.listdir(get_image_root(result, website)):
+            if filename.endswith(".txt"):
+                #logging.info("Overwrite: " + str(args.overwrite))
+                #logging.info("Exists: " + str(os.path.exists(f"{result}/{result}-pdf/{filename[:-4]}.pdf")))
+                if overwrite or not os.path.exists(f"{get_pdf_root(result, website)}/{filename[:-4]}.pdf"):
+                    logging.info(f"Generating PDF for {filename}")
+                    generate_pdf_from_images(f"{get_image_root(result, website)}/{filename}", f"{get_pdf_root(result, website)}/{filename[:-4]}.pdf")
+        logging.info(f"Successfully generated PDFs for directory: {result}")
+
+        output_path = create_web_content_page(get_pdf_root(result, website))
+        logging.info(f"Successfully generated index page for directory: {result}")
+
+        if is_completed:
+            shutil.move(get_root_path(result, website), get_root_path(result, _COMPLETED))
+            return output_path.replace(website, _COMPLETED)        
+        return output_path
+    else:
+        logging.info("Already completed.")
+        return None
+                
 async def main() -> None:
     """Entry point for command-line execution
     Handles:
@@ -595,11 +634,12 @@ async def main() -> None:
     sys.stderr.reconfigure(encoding='utf-8')
 
     parser = argparse.ArgumentParser(description='Download comic chapters from 8comic.com')
-    parser.add_argument('--book-id', required=True, help='Comic book ID to download')
+    #parser.add_argument('--book-id', required=True, help='Comic book ID to download')
     parser.add_argument('--overwrite', action='store_true', help='Force re-download of existing chapters')
-    parser.add_argument('--show-content', action='store_true', help='Show content page')
-    parser.add_argument('--from_8comic', action='store_true', help='https://www.8comic.com')
-    parser.add_argument('--from_xmanhua', action='store_true', help='https://www.xmanhua.com/')
+    parser.add_argument('--show-index', action='store_true', help='Show content page')
+    parser.add_argument('--from_8comic', help='https://www.8comic.com')
+    parser.add_argument('--from_xmanhua', help='https://www.xmanhua.com/')
+    parser.add_argument('--rescan', action='store_true', help='Rescan all downloaded comics.')
     args = parser.parse_args()
     
     logging.basicConfig(
@@ -608,42 +648,33 @@ async def main() -> None:
         datefmt='%Y-%m-%d %H:%M:%S'
     )                
     
-    count = (1 if args.from_8comic else 0) + (1 if args.from_xmanhua else 0)
-    if (count > 1):
-        print("You must select only one source from 8comic and xmanhua.", flush=True)
-        exit(1)
-    
-    if (count < 1):
-        print("You must select one source from 8comic and xmanhua.", flush=True)
-        exit(1)
-
     try:
-        if args.from_8comic:
-            async with async_playwright() as playwright:
+        if args.rescan:
+            pass
+        else:
+            if args.from_8comic:
+                website = _8COMIC
                 result = None
-                while not result:
-                    result = await run_8comic(playwright, args.book_id, args.overwrite)
-                logging.info(f"Successfully downloaded to directory: {result}")
-        elif args.from_xmanhua:
-            async with async_playwright() as playwright:
+                async with async_playwright() as playwright:
+                    while not result:
+                        result, is_completed = await run_8comic(playwright, args.from_8comic, args.overwrite)
+            elif args.from_xmanhua:
+                website = _XMANHUA
                 result = None
-                while not result:
-                    result = await run_xmanhua(playwright, args.book_id, args.overwrite)
-                logging.info(f"Successfully downloaded to directory: {result}")
-
-        for filename in os.listdir(f"{result}/{result}-images"):
-            if filename.endswith(".txt"):
-                #logging.info("Overwrite: " + str(args.overwrite))
-                #logging.info("Exists: " + str(os.path.exists(f"{result}/{result}-pdf/{filename[:-4]}.pdf")))
-                if args.overwrite or not os.path.exists(f"{result}/{result}-pdf/{filename[:-4]}.pdf"):
-                    logging.info(f"Generating PDF for {filename}")
-                    generate_pdf_from_images(f"{result}/{result}-images/{filename}", f"{result}/{result}-pdf/{filename[:-4]}.pdf")
-
-        #add_pdf_navigation(f"{result}/{result}-pdf")
-
-        create_web_content_page(f"{result}/{result}-pdf", args.show_content)
-        logging.info(f"Successfully generated PDFs for directory: {result}")
-
+                async with async_playwright() as playwright:
+                    while not result:
+                        result, is_completed = await run_xmanhua(playwright, args.from_xmanhua, args.overwrite)
+            else:
+                logging.info("You must use one of the following action:\n--rescan\n--from_8comic [book id]\n--from_xmanhua [book id]")
+                exit(1)
+                
+            logging.info(f"Successfully downloaded to directory: {result}")
+            output_path = generate_pdf(result, website, args.overwrite, is_completed)
+            logging.info(f"Successfully generated PDFs for directory: {result}")
+                                
+            if args.show_index:
+                webbrowser.open(f'file://{os.path.abspath(output_path)}')
+            
     except Exception as e:
         logging.error(f"Error occurred: {str(e)}")
 
