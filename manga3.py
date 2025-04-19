@@ -487,7 +487,6 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
     # await page.fill('input[name="password"]', '')
     # await page.get_by_role('button', name='登入').click()
     # await page.wait_for_selector('div.member_left_menu', timeout=60000)
-    #time.sleep(1)
 
     try:
         await page.goto(f"https://www.8comic.com/html/{book_id}.html")
@@ -503,7 +502,7 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
         soup = BeautifulSoup(content_page, 'html.parser')
 
         if is_completed and os.path.exists(get_root_path(book_dir, _COMPLETED)):
-            return get_root_path(book_dir, _COMPLETED), is_completed
+            return book_dir, is_completed
         os.makedirs(get_root_path(book_dir, _8COMIC), exist_ok=True)
         os.makedirs(get_image_root(book_dir, _8COMIC), exist_ok=True)
 
@@ -533,7 +532,7 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
                         # Wait for both container AND at least one image
                         await asyncio.gather(
                             page.wait_for_selector('div.comics-end', timeout=15000),
-                            page.wait_for_selector('div#comics-pics img', timeout=15000)
+                            page.wait_for_selector('div.comics-pic img', timeout=15000)
                         )
                         break
                     except PlaywrightTimeoutError:
@@ -544,28 +543,30 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
 
                 # Multiple fallback strategies for image extraction
                 images = []
-                extraction_attempts = [
-                    {'selector': 'div#comics-pics img[src]', 'attr': 'src'},
-                    {'selector': 'img[data-src]', 'attr': 'data-src'},
-                    {'selector': 'source[srcset]', 'attr': 'srcset'}
-                ]
 
-                for strategy in extraction_attempts:
-                    if not images:
-                        try:
-                            elements = await page.query_selector_all(strategy['selector'])
-                            for element in elements:
-                                src = await element.get_attribute(strategy['attr'])
-                                if src:
-                                    # Clean and normalize URL
-                                    src = unquote(src.split('?')[0])  # Remove URL parameters
-                                    if src.startswith('//'):
-                                        src = f'https:{src}'
-                                    elif not src.startswith('http'):
-                                        src = urljoin(page.url, src)
-                                    images.append(src)
-                        except Exception as e:
-                            logger.warning(f"Image extraction failed with {strategy}: {str(e)}")
+                try:               
+                    html = await page.inner_html('div#comics-pics') 
+                    soup = BeautifulSoup(html, 'html.parser')
+                    for div in soup.select('div.comics-pic'):
+                        img = div.find('img')
+                        if img:
+                            if img.has_attr('src'):
+                                src = img['src']
+                            elif img.has_attr('s'):
+                                encoded_url = img['s']
+                                src = unquote(encoded_url)
+                            else:
+                                continue
+                            
+                            # Clean and normalize URL
+                            src = unquote(src.split('?')[0])  # Remove URL parameters
+                            if src.startswith('//'):
+                                src = f'https:{src}'
+                            elif not src.startswith('http'):
+                                src = urljoin(page.url, src)
+                            images.append(src)
+                except Exception as e:
+                    logger.warning(f"Image extraction failed.: {str(e)}")
 
                 # Final validation before saving
                 if not images:
@@ -639,7 +640,6 @@ async def main() -> None:
                 is_completed = False
                 while not result:
                     result, is_completed = await run_8comic(playwright, args.book_id, args.overwrite)
-                logging.info(f"Successfully downloaded to directory: {result}")
         elif args.from_xmanhua:
             async with async_playwright() as playwright:
                 website = _XMANHUA
@@ -647,23 +647,26 @@ async def main() -> None:
                 is_complete = False
                 while not result:
                     result, is_completed = await run_xmanhua(playwright, args.book_id, args.overwrite)
-                logging.info(f"Successfully downloaded to directory: {result}")
+    
+        if os.path.exists(get_image_root(result, website)):
+            logging.info(f"Successfully downloaded to directory: {result}")
+            for filename in os.listdir(get_image_root(result, website)):
+                if filename.endswith(".txt"):
+                    #logging.info("Overwrite: " + str(args.overwrite))
+                    #logging.info("Exists: " + str(os.path.exists(f"{result}/{result}-pdf/{filename[:-4]}.pdf")))
+                    if args.overwrite or not os.path.exists(f"{get_pdf_root(result, website)}/{filename[:-4]}.pdf"):
+                        logging.info(f"Generating PDF for {filename}")
+                        generate_pdf_from_images(f"{get_image_root(result, website)}/{filename}", f"{get_pdf_root(result, website)}/{filename[:-4]}.pdf")
+            logging.info(f"Successfully generated PDFs for directory: {result}")
 
-        for filename in os.listdir(get_image_root(result, website)):
-            if filename.endswith(".txt"):
-                #logging.info("Overwrite: " + str(args.overwrite))
-                #logging.info("Exists: " + str(os.path.exists(f"{result}/{result}-pdf/{filename[:-4]}.pdf")))
-                if args.overwrite or not os.path.exists(f"{get_pdf_root(result, website)}/{filename[:-4]}.pdf"):
-                    logging.info(f"Generating PDF for {filename}")
-                    generate_pdf_from_images(f"{get_image_root(result, website)}/{filename}", f"{get_pdf_root(result, website)}/{filename[:-4]}.pdf")
 
-        #add_pdf_navigation(f"{result}/{result}-pdf")
+            create_web_content_page(get_pdf_root(result, website), args.show_content)
+            logging.info(f"Successfully generated index page for directory: {result}")
 
-        create_web_content_page(get_pdf_root(result, website), args.show_content)
-        logging.info(f"Successfully generated PDFs for directory: {result}")
-
-        if is_completed:
-            shutil.move(get_root_path(result, website), get_root_path(result, _COMPLETED))
+            if is_completed:
+                shutil.move(get_root_path(result, website), get_root_path(result, _COMPLETED))
+        else:
+            logging.info("Already completed.")
             
     except Exception as e:
         logging.error(f"Error occurred: {str(e)}")
