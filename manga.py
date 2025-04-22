@@ -44,6 +44,7 @@ import webbrowser
 import aiohttp
 import shutil
 from dotenv import load_dotenv
+import traceback
 
 _8COMIC = "_8comic"
 _XMANHUA = "xmanhua"
@@ -205,149 +206,158 @@ def generate_pdf_from_images(image_list_path: str, output_pdf_path: str) -> None
         3. Smart resizing with aspect ratio preservation
         4. PDF assembly with proper DPI settings
     """
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger('pdf_generator')
     os.makedirs(os.path.dirname(output_pdf_path), exist_ok=True)
 
     try:
-        with open(image_list_path, 'r', encoding='utf-8') as f:
-            urls = [line.strip() for line in f if line.strip()]
-    except Exception as e:
-        logger.error(f"Failed to read {image_list_path}: {str(e)}")
-        raise
+        try:
+            with open(image_list_path, 'r', encoding='utf-8') as f:
+                urls = [line.strip() for line in f if line.strip()]
+        except Exception as e:
+            logger.error(f"Failed to read {image_list_path}: {str(e)}")
+            raise
 
-    if not urls:
-        logger.error("No valid image URLs found")
-        raise ValueError("No valid image URLs found")
+        if not urls:
+            logger.error("No valid image URLs found")
+            raise ValueError("No valid image URLs found")
 
-    session = requests.Session()
-    
-    retry_strategy = requests.packages.urllib3.util.Retry(
-        total=5,
-        backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["HEAD", "GET"]
-    )
-    
-    adapter = requests.adapters.HTTPAdapter(
-        pool_connections=10,
-        pool_maxsize=20,
-        max_retries=retry_strategy
-    )
-    
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br'
-    }
+        session = requests.Session()
+        
+        retry_strategy = requests.packages.urllib3.util.Retry(
+            total=5,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET"]
+        )
+        
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=10,
+            pool_maxsize=20,
+            max_retries=retry_strategy
+        )
+        
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br'
+        }
 
-    def download_and_process(url: str):
-        MAX_DIMENSION = 65500
-        MIN_DIMENSION = 4  # Set minimum size to 4 pixels (4 points at 72 DPI)
-        target_width = 1600
-        max_retries = 3
+        def download_and_process(url: str):
+            logger = logging.getLogger('image_processor')
+            MAX_DIMENSION = 65500
+            MIN_DIMENSION = 4  # Set minimum size to 4 pixels (4 points at 72 DPI)
+            target_width = 1600
+            max_retries = 3
 
-        for attempt in range(max_retries):
-            try:
-                response = session.get(url, headers=headers, timeout=20)
-                response.raise_for_status()
-                content = response.content
+            for attempt in range(max_retries):
+                try:
+                    response = session.get(url, headers=headers, timeout=20)
+                    response.raise_for_status()
+                    content = response.content
 
-                # Verify image integrity
-                with BytesIO(content) as verify_buffer:
-                    with Image.open(verify_buffer) as verify_img:
-                        verify_img.verify()
+                    # Verify image integrity
+                    with BytesIO(content) as verify_buffer:
+                        with Image.open(verify_buffer) as verify_img:
+                            verify_img.verify()
 
-                # Process the image
-                with BytesIO(content) as img_buffer:
-                    with Image.open(img_buffer) as img:
-                        # Convert color modes
-                        if img.mode in ('RGBA', 'P'):
-                            img = img.convert('RGB')
+                    # Process the image
+                    with BytesIO(content) as img_buffer:
+                        with Image.open(img_buffer) as img:
+                            # Convert color modes
+                            if img.mode in ('RGBA', 'P'):
+                                img = img.convert('RGB')
 
-                        # Modified resizing logic with size constraints
-                        original_width, original_height = img.size
-                        
-                        # Handle division by zero for invalid images
-                        if original_width == 0 or original_height == 0:
-                            raise ValueError("Invalid image dimensions (0 size detected)")
+                            # Modified resizing logic with size constraints
+                            original_width, original_height = img.size
+                            
+                            # Handle division by zero for invalid images
+                            if original_width == 0 or original_height == 0:
+                                raise ValueError("Invalid image dimensions (0 size detected)")
 
-                        # Calculate target dimensions with aspect ratio
-                        ratio = target_width / original_width
-                        new_height = int(original_height * ratio)
-
-                        # Constrain dimensions to valid ranges
-                        if new_height > MAX_DIMENSION:
-                            ratio = MAX_DIMENSION / original_height
-                            target_width = int(original_width * ratio)
-                            new_height = MAX_DIMENSION
-
-                        if target_width > MAX_DIMENSION:
-                            ratio = MAX_DIMENSION / original_width
-                            target_width = MAX_DIMENSION
+                            # Calculate target dimensions with aspect ratio
+                            ratio = target_width / original_width
                             new_height = int(original_height * ratio)
 
-                        # Apply minimum size constraints
-                        target_width = max(min(target_width, MAX_DIMENSION), MIN_DIMENSION)
-                        new_height = max(min(new_height, MAX_DIMENSION), MIN_DIMENSION)
+                            # Constrain dimensions to valid ranges
+                            if new_height > MAX_DIMENSION:
+                                ratio = MAX_DIMENSION / original_height
+                                target_width = int(original_width * ratio)
+                                new_height = MAX_DIMENSION
 
-                        # Final resize
-                        img = img.resize(
-                            (target_width, new_height),
-                            Image.Resampling.LANCZOS
-                        )
+                            if target_width > MAX_DIMENSION:
+                                ratio = MAX_DIMENSION / original_width
+                                target_width = MAX_DIMENSION
+                                new_height = int(original_height * ratio)
 
-                        # Convert and save with explicit DPI
-                        output_buffer = BytesIO()
-                        if img.mode in ('RGBA', 'P'):
-                            img = img.convert('RGB')
-                        img.save(output_buffer, format='JPEG', quality=90, dpi=(72, 72))
-                        return [output_buffer.getvalue()]
+                            # Apply minimum size constraints
+                            target_width = max(min(target_width, MAX_DIMENSION), MIN_DIMENSION)
+                            new_height = max(min(new_height, MAX_DIMENSION), MIN_DIMENSION)
 
-            except Exception as e:
-                logger.warning(f"Attempt {attempt+1}/{max_retries} failed for {url}: {str(e)}")
-                if attempt == max_retries - 1:
-                    logger.error(f"Permanent failure for {url}")
-                    return None
-                time.sleep(2 ** attempt)  # Exponential backoff
+                            # Final resize
+                            img = img.resize(
+                                (target_width, new_height),
+                                Image.Resampling.LANCZOS
+                            )
 
-        return None
+                            # Convert and save with explicit DPI
+                            output_buffer = BytesIO()
+                            if img.mode in ('RGBA', 'P'):
+                                img = img.convert('RGB')
+                            img.save(output_buffer, format='JPEG', quality=90, dpi=(72, 72))
+                            return [output_buffer.getvalue()]
 
-    # Update the PDF generation image collection:
-    try:
-        images = []
-        with ThreadPoolExecutor(max_workers=min(20, os.cpu_count())) as executor:
-            futures = [executor.submit(download_and_process, url) for url in urls]
-            
-            for future in futures:
-                result = future.result()
-                if result:
-                    images.extend(result)
-                else:
-                    logger.error("Critical image missing, aborting PDF creation")
-                    raise RuntimeError("Essential images failed to download")
+                except Exception as e:
+                    logger.warning(f"Attempt {attempt+1}/{max_retries} failed for {url}: {str(e)}")
+                    if attempt == max_retries - 1:
+                        logger.error(f"Permanent failure for {url}")
+                        return None
+                    time.sleep(2 ** attempt)  # Exponential backoff
 
-        # Key modification: Use implicit layout for continuous images
-        pdf_bytes = img2pdf.convert(
-            images,
-            rotation=img2pdf.Rotation.ifvalid,
-            # Add these new parameters for better control
-            pagesize=None,  # Enable automatic page size
-            fit=img2pdf.FitMode.into,
-            border=(0, 0)  # Remove any default borders
-        )
+            return None
 
-        with open(output_pdf_path, 'wb') as f:
-            f.write(pdf_bytes)
+        # Update the PDF generation image collection:
+        try:
+            images = []
+            with ThreadPoolExecutor(max_workers=min(20, os.cpu_count())) as executor:
+                futures = [executor.submit(download_and_process, url) for url in urls]
+                
+                for future in futures:
+                    result = future.result()
+                    if result:
+                        images.extend(result)
+                    else:
+                        logger.error("Critical image missing, aborting PDF creation")
+                        raise RuntimeError("Essential images failed to download")
 
-        logger.info(f"Successfully generated PDF: {output_pdf_path}")
+            # Key modification: Use implicit layout for continuous images
+            pdf_bytes = img2pdf.convert(
+                images,
+                rotation=img2pdf.Rotation.ifvalid,
+                # Add these new parameters for better control
+                pagesize=None,  # Enable automatic page size
+                fit=img2pdf.FitMode.into,
+                border=(0, 0)  # Remove any default borders
+            )
 
+            with open(output_pdf_path, 'wb') as f:
+                f.write(pdf_bytes)
+
+            logger.info(f"Successfully generated PDF: {output_pdf_path}")
+
+        except Exception as e:
+            #logger.error(f"PDF Generation Failed: {str(e)}")
+            #raise RuntimeError(f"PDF Generation Failed: {str(e)}") from e
+            logger.error(f"Failed processing {url}")
+            logger.debug(f"Error details: {str(e)}")
+            logger.debug(traceback.format_exc())
+            return None
     except Exception as e:
-        logger.error(f"PDF Generation Failed: {str(e)}")
-        raise RuntimeError(f"PDF Generation Failed: {str(e)}") from e
+        logger.error(f"PDF creation failed for {image_list_path}")
+        logger.error(f"Error stack: {traceback.format_exc()}")
+        raise
 
 async def run_xmanhua(p: Playwright, book_id: str, overwrite: bool=False) -> str:
     logging.basicConfig(level=logging.INFO)
@@ -477,129 +487,132 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
         3. Image URL collection with multiple fallback strategies
         4. Chapter navigation with error recovery
     """
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-
-    browser = await p.chromium.launch(headless=True, slow_mo=500)
-    page = await browser.new_page()
-    password = os.getenv('KEY_8COMIC')
-    if password:
-        await page.goto(f"https://www.8comic.com/member/login")
-        await page.fill('input[name="username"]', 'canytam46')
-        await page.fill('input[name="password"]', password)
-        await page.get_by_role('button', name='登入').click()
-        await page.wait_for_selector('div.member_left_menu', timeout=60000)
-
+    logger = logging.getLogger('8comic')
     try:
-        await page.goto(f"https://www.8comic.com/html/{book_id}.html")
-        header = await page.inner_html('head')
-        soup = BeautifulSoup(header, 'html.parser')
-        meta_name = soup.find('meta', {'name': 'name'})
-        book_name = meta_name['content'].strip() if meta_name else "Unknown Comic"
-        book_dir = f"{book_name}_{book_id}"
-        body = await page.inner_html('body')
-        soup = BeautifulSoup(body, 'html.parser')
-        is_completed = soup.find('span', {'class': "item-info-status"}).get_text(strip=True) == '已完結'
-        content_page = await page.inner_html('div#chapters')
-        soup = BeautifulSoup(content_page, 'html.parser')
+        browser = await p.chromium.launch(headless=True, slow_mo=500)
+        page = await browser.new_page()
+        password = os.getenv('KEY_8COMIC')
+        if password:
+            await page.goto(f"https://www.8comic.com/member/login")
+            await page.fill('input[name="username"]', 'canytam46')
+            await page.fill('input[name="password"]', password)
+            await page.get_by_role('button', name='登入').click()
+            await page.wait_for_selector('div.member_left_menu', timeout=60000)
 
-        if is_completed and os.path.exists(get_root_path(book_dir, _COMPLETED)):
-            return book_dir, is_completed
-        os.makedirs(get_root_path(book_dir, _8COMIC), exist_ok=True)
-        os.makedirs(get_image_root(book_dir, _8COMIC), exist_ok=True)
+        try:
+            await page.goto(f"https://www.8comic.com/html/{book_id}.html")
+            header = await page.inner_html('head')
+            soup = BeautifulSoup(header, 'html.parser')
+            meta_name = soup.find('meta', {'name': 'name'})
+            book_name = meta_name['content'].strip() if meta_name else "Unknown Comic"
+            book_dir = f"{book_name}_{book_id}"
+            body = await page.inner_html('body')
+            soup = BeautifulSoup(body, 'html.parser')
+            is_completed = soup.find('span', {'class': "item-info-status"}).get_text(strip=True) == '已完結'
+            content_page = await page.inner_html('div#chapters')
+            soup = BeautifulSoup(content_page, 'html.parser')
 
-        chapters = []
-        for index, a_tag in enumerate(soup.find_all('a'), start=1):
-            if a_tag.has_attr('id'):
-                if overwrite or not os.path.exists(get_image_path(index, a_tag.get_text(strip=True), book_dir, _8COMIC)):
-                    chapters.append({'index': index, 'id': a_tag['id'], 'name': a_tag.get_text(strip=True)})
-                    logger.info(f"Found chapter {index}: {a_tag.get_text(strip=True)}")
+            if is_completed and os.path.exists(get_root_path(book_dir, _COMPLETED)):
+                return book_dir, is_completed
+            os.makedirs(get_root_path(book_dir, _8COMIC), exist_ok=True)
+            os.makedirs(get_image_root(book_dir, _8COMIC), exist_ok=True)
 
-        if not chapters:
-            await browser.close()
-            return book_dir, is_completed
-        
-        await page.click(f"a#{chapters[0]['id']}")
-        await page.is_visible('div.comics-end')
-        await page.click('a.view-back')
+            chapters = []
+            for index, a_tag in enumerate(soup.find_all('a'), start=1):
+                if a_tag.has_attr('id'):
+                    if overwrite or not os.path.exists(get_image_path(index, a_tag.get_text(strip=True), book_dir, _8COMIC)):
+                        chapters.append({'index': index, 'id': a_tag['id'], 'name': a_tag.get_text(strip=True)})
+                        logger.info(f"Found chapter {index}: {a_tag.get_text(strip=True)}")
 
-        for chapter in chapters:
-            logger.info(f"Processing chapter {chapter['index']}")
-            try:
-                # Retry mechanism for chapter navigation
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        await page.click(f'a#{chapter["id"]}')
-                        # Wait for both container AND at least one image
-                        await asyncio.gather(
-                            page.wait_for_selector('div.comics-end', timeout=15000),
-                            page.wait_for_selector('div.comics-pic img', timeout=15000)
-                        )
-                        break
-                    except PlaywrightTimeoutError:
-                        if attempt == max_retries - 1:
-                            raise
-                        await page.reload()
-                        logger.warning(f"Retrying chapter {chapter['index']} ({attempt+1}/{max_retries})")
+            if not chapters:
+                await browser.close()
+                return book_dir, is_completed
+            
+            await page.click(f"a#{chapters[0]['id']}")
+            await page.is_visible('div.comics-end')
+            await page.click('a.view-back')
 
-                # Multiple fallback strategies for image extraction
-                images = []
+            for chapter in chapters:
+                logger.info(f"Processing chapter {chapter['index']}")
+                try:
+                    # Retry mechanism for chapter navigation
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            await page.click(f'a#{chapter["id"]}')
+                            # Wait for both container AND at least one image
+                            await asyncio.gather(
+                                page.wait_for_selector('div.comics-end', timeout=15000),
+                                page.wait_for_selector('div.comics-pic img', timeout=15000)
+                            )
+                            break
+                        except PlaywrightTimeoutError:
+                            if attempt == max_retries - 1:
+                                raise
+                            await page.reload()
+                            logger.warning(f"Retrying chapter {chapter['index']} ({attempt+1}/{max_retries})")
 
-                try:               
-                    html = await page.inner_html('div#comics-pics') 
-                    soup = BeautifulSoup(html, 'html.parser')
-                    for div in soup.select('div.comics-pic'):
-                        img = div.find('img')
-                        if img:
-                            if img.has_attr('src'):
-                                src = img['src']
-                            elif img.has_attr('s'):
-                                encoded_url = img['s']
-                                src = unquote(encoded_url)
-                            else:
-                                continue
-                            
-                            # Clean and normalize URL
-                            src = unquote(src.split('?')[0])  # Remove URL parameters
-                            if src.startswith('//'):
-                                src = f'https:{src}'
-                            elif not src.startswith('http'):
-                                src = urljoin(page.url, src)
-                            images.append(src)
+                    # Multiple fallback strategies for image extraction
+                    images = []
+
+                    try:               
+                        html = await page.inner_html('div#comics-pics') 
+                        soup = BeautifulSoup(html, 'html.parser')
+                        for div in soup.select('div.comics-pic'):
+                            img = div.find('img')
+                            if img:
+                                if img.has_attr('src'):
+                                    src = img['src']
+                                elif img.has_attr('s'):
+                                    encoded_url = img['s']
+                                    src = unquote(encoded_url)
+                                else:
+                                    continue
+                                
+                                # Clean and normalize URL
+                                src = unquote(src.split('?')[0])  # Remove URL parameters
+                                if src.startswith('//'):
+                                    src = f'https:{src}'
+                                elif not src.startswith('http'):
+                                    src = urljoin(page.url, src)
+                                images.append(src)
+                    except Exception as e:
+                        logger.warning(f"Image extraction failed.: {str(e)}")
+
+                    # Final validation before saving
+                    if not images:
+                        logger.error(f"No images found for chapter {chapter['index']} after multiple attempts")
+                        continue
+
+                    # Deduplicate while preserving order
+                    seen = set()
+                    unique_images = [x for x in images if not (x in seen or seen.add(x))]
+
+                    # Save only if we have valid URLs
+                    output_path = get_image_path(chapter['index'], chapter['name'], book_dir, _8COMIC)
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        for url in unique_images:
+                            f.write(f"{url}\n")
+                        logger.info(f"Saved {len(unique_images)} images to {output_path}")
+
+                    await page.click('a.view-back')
+
                 except Exception as e:
-                    logger.warning(f"Image extraction failed.: {str(e)}")
-
-                # Final validation before saving
-                if not images:
-                    logger.error(f"No images found for chapter {chapter['index']} after multiple attempts")
+                    logger.error(f"Failed chapter {chapter['index']}: {str(e)}")
                     continue
 
-                # Deduplicate while preserving order
-                seen = set()
-                unique_images = [x for x in images if not (x in seen or seen.add(x))]
+            return book_dir, is_completed
 
-                # Save only if we have valid URLs
-                output_path = get_image_path(chapter['index'], chapter['name'], book_dir, _8COMIC)
-                with open(output_path, 'w', encoding='utf-8') as f:
-                    for url in unique_images:
-                        f.write(f"{url}\n")
-                    logger.info(f"Saved {len(unique_images)} images to {output_path}")
-
-                await page.click('a.view-back')
-
-            except Exception as e:
-                logger.error(f"Failed chapter {chapter['index']}: {str(e)}")
-                continue
-
-        return book_dir, is_completed
-
+        except Exception as e:
+            logging.error(f"Error occurred: {str(e)}")
+            return None, False
+        finally:
+            await browser.close()
     except Exception as e:
-        logging.error(f"Error occurred: {str(e)}")
+        logger.error(f"Critical error in run_8comic: {str(e)}")
+        logger.debug(traceback.format_exec())
         return None, False
-    finally:
-        await browser.close()
-   
+
 def generate_pdf(result, website, overwrite, is_completed) -> str:
     if os.path.exists(get_image_root(result, website)):
         for filename in os.listdir(get_image_root(result, website)):
@@ -644,39 +657,51 @@ async def main() -> None:
     
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )                
-    
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[
+            logging.FileHandler('comic_downloader.log', encoding='utf-8'),
+            logging.StreamHandler()
+        ]
+    )
+    logger = logging.getLogger('main')
+
     try:
-        if args.rescan:
-            pass
-        else:
-            if args.from_8comic:
-                website = _8COMIC
-                result = None
-                async with async_playwright() as playwright:
-                    while not result:
-                        result, is_completed = await run_8comic(playwright, args.from_8comic, args.overwrite)
-            elif args.from_xmanhua:
-                website = _XMANHUA
-                result = None
-                async with async_playwright() as playwright:
-                    while not result:
-                        result, is_completed = await run_xmanhua(playwright, args.from_xmanhua, args.overwrite)
+        try:
+            if args.rescan:
+                pass
             else:
-                logging.info("You must use one of the following action:\n--rescan\n--from_8comic [book id]\n--from_xmanhua [book id]")
-                exit(1)
+                if args.from_8comic:
+                    website = _8COMIC
+                    result = None
+                    async with async_playwright() as playwright:
+                        while not result:
+                            result, is_completed = await run_8comic(playwright, args.from_8comic, args.overwrite)
+                elif args.from_xmanhua:
+                    website = _XMANHUA
+                    result = None
+                    async with async_playwright() as playwright:
+                        while not result:
+                            result, is_completed = await run_xmanhua(playwright, args.from_xmanhua, args.overwrite)
+                else:
+                    logging.info("You must use one of the following action:\n--rescan\n--from_8comic [book id]\n--from_xmanhua [book id]")
+                    exit(1)
+                    
+                logging.info(f"Successfully downloaded to directory: {result}")
+                output_path = generate_pdf(result, website, args.overwrite, is_completed)
+                logging.info(f"Successfully generated PDFs for directory: {result}")
+                                    
+                if args.show_index:
+                    webbrowser.open(f'file://{os.path.abspath(output_path)}')
                 
-            logging.info(f"Successfully downloaded to directory: {result}")
-            output_path = generate_pdf(result, website, args.overwrite, is_completed)
-            logging.info(f"Successfully generated PDFs for directory: {result}")
-                                
-            if args.show_index:
-                webbrowser.open(f'file://{os.path.abspath(output_path)}')
-            
+        except Exception as e:
+            logging.error(f"Error occurred: {str(e)}")
     except Exception as e:
-        logging.error(f"Error occurred: {str(e)}")
+        logger.error("Fatal applicaion error")
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error message: {str(e)}")
+        logger.debug(f"Full traceback:\n{traceback.format_exc()}")
+        sys.exit(1)
 
 if __name__ == '__main__':
     asyncio.run(main())
