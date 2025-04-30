@@ -70,7 +70,7 @@ def get_image_path(index, chapter_name, chapter_dir, website):
     Returns:
         Path to chapter's image list file
     """
-    return os.path.join(get_image_root(chapter_dir, website), f'ch{index:04d} - {chapter_name}.txt')
+    return os.path.join(get_image_root(chapter_dir, website), f'ch{index:04d} - {chapter_name} - {chapter_dir}.txt')
 
 def get_pdf_path(index, chapter_name, chapter_dir, website):
     """Generate standardized path for PDF files
@@ -350,7 +350,7 @@ def generate_pdf_from_images(image_list_path: str, output_pdf_path: str) -> None
         except Exception as e:
             #logger.error(f"PDF Generation Failed: {str(e)}")
             #raise RuntimeError(f"PDF Generation Failed: {str(e)}") from e
-            logger.error(f"Failed processing {url}")
+            logger.error(f"Failed processing {urls}")
             logger.debug(f"Error details: {str(e)}")
             logger.debug(traceback.format_exc())
             return None
@@ -489,7 +489,7 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
     """
     logger = logging.getLogger('8comic')
     try:
-        browser = await p.chromium.launch(headless=True, slow_mo=500)
+        browser = await p.chromium.launch(headless=False, slow_mo=1000)
         page = await browser.new_page()
         password = os.getenv('KEY_8COMIC')
         if password:
@@ -516,6 +516,12 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
                 return book_dir, is_completed
             os.makedirs(get_root_path(book_dir, _8COMIC), exist_ok=True)
             os.makedirs(get_image_root(book_dir, _8COMIC), exist_ok=True)
+
+            log_path = os.path.join(get_root_path(book_dir, _8COMIC), 'comic.log')
+            file_handler = logging.FileHandler(log_path, encoding='utf-8')
+            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s', '%Y-%m-%d %H:%M:%S'))
+            logging.root.addHandler(file_handler)
+            logger.info(f"Logging setup in {log_path}")
 
             chapters = []
             for index, a_tag in enumerate(soup.find_all('a'), start=1):
@@ -599,7 +605,7 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
 
                 except Exception as e:
                     logger.error(f"Failed chapter {chapter['index']}: {str(e)}")
-                    continue
+                    return None, False
 
             return book_dir, is_completed
 
@@ -660,7 +666,6 @@ async def main() -> None:
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[
-            logging.FileHandler('comic_downloader.log', encoding='utf-8'),
             logging.StreamHandler()
         ]
     )
