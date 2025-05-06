@@ -45,6 +45,7 @@ import aiohttp
 import shutil
 from dotenv import load_dotenv
 import traceback
+import json
 
 _8COMIC = "_8comic"
 _XMANHUA = "xmanhua"
@@ -489,7 +490,7 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
     """
     logger = logging.getLogger('8comic')
     try:
-        browser = await p.chromium.launch(headless=False, slow_mo=1000)
+        browser = await p.chromium.launch(headless=False, slow_mo=300)
         page = await browser.new_page()
         password = os.getenv('KEY_8COMIC')
         if password:
@@ -524,16 +525,19 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
             logger.info(f"Logging setup in {log_path}")
 
             chapters = []
-            for index, a_tag in enumerate(soup.find_all('a'), start=1):
+            for index, a_tag in enumerate(list(dict.fromkeys(soup.find_all('a'))), start=1):
                 if a_tag.has_attr('id'):
                     if overwrite or not os.path.exists(get_image_path(index, a_tag.get_text(strip=True), book_dir, _8COMIC)):
-                        chapters.append({'index': index, 'id': a_tag['id'], 'name': a_tag.get_text(strip=True)})
+                        chapters.append({'index': index, 'id': a_tag['id'], 'name': a_tag.get_text(strip=True).replace("/", "%2F")})
                         logger.info(f"Found chapter {index}: {a_tag.get_text(strip=True)}")
 
             if not chapters:
                 await browser.close()
                 return book_dir, is_completed
             
+            #with open('chapters.json', 'w') as f:
+            #    json.dump(chapters, f, indent=4)
+
             await page.click(f"a#{chapters[0]['id']}")
             await page.is_visible('div.comics-end')
             await page.click('a.view-back')
@@ -618,6 +622,91 @@ async def run_8comic(p: Playwright, book_id: str, overwrite: bool = False) -> st
         logger.error(f"Critical error in run_8comic: {str(e)}")
         logger.debug(traceback.format_exec())
         return None, False
+    
+async def rescan_existing_books(overwrite=False):
+    """Rescan all existing books and download new chapters"""
+    existing_books = find_existing_books()
+    logger = logging.getLogger('rescan')
+    
+    for book in existing_books:
+        website = book['website']
+        book_id = book['book_id']
+        original_dir = book['dir_name']
+        
+        logger.info(f"Processing {website} book {book_id} ({original_dir})")
+        
+        try:
+            async with async_playwright() as playwright:
+                if website == _8COMIC:
+                    result, is_completed = await run_8comic(playwright, book_id, overwrite)
+                elif website == _XMANHUA:
+                    result = await run_xmanhua(playwright, book_id, overwrite)
+                    is_completed = False
+                else:
+                    continue
+
+                if result:
+                    # Handle completed comics
+                    if is_completed and website != _COMPLETED:
+                        src_dir = get_root_path(result, website)
+                        dest_dir = get_root_path(result, _COMPLETED)
+                        # Store original website in metadata
+                        os.makedirs(dest_dir, exist_ok=True)
+                        with open(os.path.join(dest_dir, '.source'), 'w') as f:
+                            f.write(website)
+                        shutil.move(src_dir, dest_dir)
+                        logger.info(f"Moved completed comic to {dest_dir}")
+                    
+                    generate_pdf(result, website, overwrite, is_completed)
+                    logger.info(f"Successfully processed updates for {original_dir}")
+
+        except Exception as e:
+            logger.error(f"Failed to rescan {original_dir}: {str(e)}")
+            logger.debug(traceback.format_exc())
+
+def find_existing_books():
+    """Scan existing directories to find books from supported websites"""
+    existing_books = []
+    # Scan _8comic directory
+    if os.path.exists(_8COMIC):
+        for dir_name in os.listdir(_8COMIC):
+            dir_path = os.path.join(_8COMIC, dir_name)
+            if os.path.isdir(dir_path):
+                parts = dir_name.rsplit('_', 1)
+                if len(parts) == 2:
+                    existing_books.append({
+                        'website': _8COMIC,
+                        'book_id': parts[1],
+                        'dir_name': dir_name
+                    })
+    # Scan _xmanhua directory
+    if os.path.exists(_XMANHUA):
+        for dir_name in os.listdir(_XMANHUA):
+            dir_path = os.path.join(_XMANHUA, dir_name)
+            if os.path.isdir(dir_path):
+                parts = dir_name.rsplit('_', 1)
+                if len(parts) == 2:
+                    existing_books.append({
+                        'website': _XMANHUA,
+                        'book_id': parts[1],
+                        'dir_name': dir_name
+                    })
+    # Scan completed directory with original website tracking
+    if os.path.exists(_COMPLETED):
+        for dir_name in os.listdir(_COMPLETED):
+            dir_path = os.path.join(_COMPLETED, dir_name)
+            meta_path = os.path.join(dir_path, '.source')
+            if os.path.isdir(dir_path) and os.path.exists(meta_path):
+                with open(meta_path, 'r') as f:
+                    website = f.read().strip()
+                parts = dir_name.rsplit('_', 1)
+                if len(parts) == 2:
+                    existing_books.append({
+                        'website': website,
+                        'book_id': parts[1],
+                        'dir_name': dir_name
+                    })
+    return existing_books
 
 def generate_pdf(result, website, overwrite, is_completed) -> str:
     if os.path.exists(get_image_root(result, website)):
@@ -634,8 +723,14 @@ def generate_pdf(result, website, overwrite, is_completed) -> str:
         logging.info(f"Successfully generated index page for directory: {result}")
 
         if is_completed:
-            shutil.move(get_root_path(result, website), get_root_path(result, _COMPLETED))
-            return output_path.replace(website, _COMPLETED)        
+            src = get_root_path(result, website)
+            dest = get_root_path(result, _COMPLETED)
+            shutil.move(src, _COMPLETED) #dest)
+            # Create metadata file for completed comics
+            os.makedirs(dest, exist_ok=True)
+            with open(os.path.join(dest, '.source'), 'w') as f:
+                f.write(website)
+            return output_path.replace(website, _COMPLETED)
         return output_path
     else:
         logging.info("Already completed.")
@@ -674,7 +769,8 @@ async def main() -> None:
     try:
         try:
             if args.rescan:
-                pass
+                await rescan_existing_books(args.overwrite)
+                return
             else:
                 if args.from_8comic:
                     website = _8COMIC
